@@ -248,8 +248,14 @@ where
     R: ::std::io::Read + ::std::io::Seek,
 {
     match AsciiStlReader::probe(read) {
-        Ok(()) => AsciiStlReader::create_triangle_iterator(read),
-        Err(_) => BinaryStlReader::create_triangle_iterator(read),
+        Ok(()) => {
+            read.seek(::std::io::SeekFrom::Start(0))?;
+            AsciiStlReader::create_triangle_iterator(read)
+        }
+        Err(_) => {
+            read.seek(::std::io::SeekFrom::Start(0))?;
+            BinaryStlReader::create_triangle_iterator(read)
+        }
     }
 }
 
@@ -382,18 +388,23 @@ impl<'a> ::std::iter::Iterator for AsciiStlReader<'a> {
 impl<'a> AsciiStlReader<'a> {
     /// Test whether or not read is an ascii STL file.
     pub fn probe<F: ::std::io::Read + ::std::io::Seek>(read: &mut F) -> Result<()> {
-        let mut header = String::new();
-        let maybe_read_error = BufReader::new(&mut *read).read_line(&mut header);
-        // Try to seek back to start before evaluating potential read errors.
-        read.seek(::std::io::SeekFrom::Start(0))?;
-        maybe_read_error?;
-        if !header.starts_with("solid ") {
+        let mut header = [0u8; 80];
+        let len = read.read(&mut header)?;
+
+        if len != header.len() && header.starts_with(b"solid ") {
+            return Ok(());
+        }
+
+        let mut after_header = [0u8; 80];
+        read.read(&mut after_header)?;
+
+        if header.starts_with(b"solid ") && ::std::str::from_utf8(&after_header).is_ok() {
+            Ok(())
+        } else {
             Err(::std::io::Error::new(
                 ::std::io::ErrorKind::InvalidData,
                 "ascii STL does not start with \"solid \"",
             ))
-        } else {
-            Ok(())
         }
     }
     /// Factory to create a new ascii STL Reader from read.
